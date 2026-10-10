@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: closetiq-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: IMAGE_MODEL
+        value: gpt-image-1
+      - key: CLIENT_URL
+        value: https://${{closetiq-web.RENDER_EXTERNAL_HOSTNAME}}
+
+  - type: web
+    name: closetiq-web
+    runtime: static
+    rootDir: client
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://${{closetiq-api.RENDER_EXTERNAL_HOSTNAME}}/api

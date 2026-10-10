@@ -45,8 +45,8 @@ const startServer = async () => {
   const dbConnected = await connectDB();
   databaseStatus = dbConnected ? "connected" : "disconnected";
 
-  app.listen(PORT, () => {
-    console.log(`ClosetIQ API running on http://localhost:${PORT}`);
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`ClosetIQ API running on port ${PORT}`);
   });
 };
 
