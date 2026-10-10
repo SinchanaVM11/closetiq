@@ -4,10 +4,14 @@ const express = require("express");
 const cors = require("cors");
 
 const connectDB = require("./config/db");
+const garmentRoutes = require("./routes/garmentRoutes");
+const errorHandler = require("./middleware/errorHandler");
+const outfitRoutes = require("./routes/outfitRoutes");
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5050;
+let databaseStatus = "disconnected";
 
 app.use(
   cors({
@@ -17,15 +21,27 @@ app.use(
 
 app.use(express.json());
 
+// Health check
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
     message: "ClosetIQ API is running",
+    status: databaseStatus,
+    port: PORT,
+    timestamp: new Date().toISOString(),
   });
 });
 
+// API routes
+app.use("/api/garments", garmentRoutes);
+app.use("/api/outfits", outfitRoutes);
+
+// Error handler — must be after routes
+app.use(errorHandler);
+
 const startServer = async () => {
-  await connectDB();
+  const dbConnected = await connectDB();
+  databaseStatus = dbConnected ? "connected" : "disconnected";
 
   app.listen(PORT, () => {
     console.log(`ClosetIQ API running on http://localhost:${PORT}`);
