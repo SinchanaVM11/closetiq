@@ -44,3 +44,9 @@ export const recommendOutfits = (context) =>
     method: "POST",
     body: JSON.stringify(context),
   });
+
+export const generateOutfitImages = ({ description, outfit }) =>
+  request("/images/outfit", {
+    method: "POST",
+    body: JSON.stringify({ description, outfit }),
+  });
