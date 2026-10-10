@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createGarment,
   deleteGarment,
+  generateOutfitImages,
   getGarments,
   recommendOutfits,
   updateGarment,
@@ -146,13 +147,24 @@ function StylePage() {
   const [outfits, setOutfits] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [generated, setGenerated] = useState(null);
+  const [generating, setGenerating] = useState(false);
   async function submit(event) {
     event.preventDefault(); setLoading(true); setMessage(""); setOutfits([]);
-    try { const result = await recommendOutfits(context); setOutfits(result.data || []); if (!result.data?.length) setMessage("You need at least one top, one bottom, and one pair of shoes for a complete look."); }
+    try { const result = await recommendOutfits(context); setOutfits(result.data || []); setGenerated(null); if (!result.data?.length) setMessage("You need at least one top, one bottom, and one pair of shoes for a complete look."); }
     catch (error) { setMessage(error.message); } finally { setLoading(false); }
   }
-  return <section className="page"><PageIntro eyebrow="the daily edit" title={<>Style me<span className="heading-dot">.</span></>} description="A clear, explainable edit built only from pieces in your wardrobe." /><div className="style-layout"><form className="style-form panel" onSubmit={submit}><div className="eyebrow">set the scene</div><h2>What are you dressing for?</h2><label>Occasion<select value={context.occasion} onChange={(e) => setContext({ ...context, occasion: e.target.value })}>{OCCASIONS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Style / mood<select value={context.style} onChange={(e) => setContext({ ...context, style: e.target.value })}>{STYLES.map((item) => <option key={item}>{item}</option>)}</select></label><label>Anything else? <span className="optional">optional</span><textarea value={context.description} onChange={(e) => setContext({ ...context, description: e.target.value })} placeholder="A relaxed coffee run, but still pulled together…" rows="4" /></label><button className="button dark full-button" disabled={loading}>{loading ? "Composing…" : "Compose my looks ↗"}</button></form><div className="outfit-results">{loading ? <LoadingState /> : outfits.length ? outfits.map((outfit) => <OutfitCard key={`${outfit.rank}-${outfit.title}`} outfit={outfit} />) : <div className="result-intro"><span>✦</span><h2>Your edit, in three pieces.</h2><p>Tell us the occasion and mood. ClosetIQ will score the combinations you own across occasion, style, color harmony and freshness.</p>{message && <p className="inline-message">{message}</p>}</div>}</div></div></section>;
+  async function generate() {
+    const outfit = outfits[0]?.items;
+    if (!outfit) return;
+    setGenerating(true); setMessage("");
+    try { const result = await generateOutfitImages({ description: context.description || `${context.occasion}, ${context.style}`, outfit }); setGenerated(result.data); }
+    catch (error) { setMessage(error.message); } finally { setGenerating(false); }
+  }
+  return <section className="page"><PageIntro eyebrow="the daily edit" title={<>Style me<span className="heading-dot">.</span></>} description="A clear, explainable edit built only from pieces in your wardrobe." /><div className="style-layout"><form className="style-form panel" onSubmit={submit}><div className="eyebrow">set the scene</div><h2>What are you dressing for?</h2><label>Occasion<select value={context.occasion} onChange={(e) => setContext({ ...context, occasion: e.target.value })}>{OCCASIONS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Style / mood<select value={context.style} onChange={(e) => setContext({ ...context, style: e.target.value })}>{STYLES.map((item) => <option key={item}>{item}</option>)}</select></label><label>Anything else? <span className="optional">optional</span><textarea value={context.description} onChange={(e) => setContext({ ...context, description: e.target.value })} placeholder="A relaxed coffee run, but still pulled together…" rows="4" /></label><button className="button dark full-button" disabled={loading}>{loading ? "Composing…" : "Compose my looks ↗"}</button></form><div className="outfit-results">{loading ? <LoadingState /> : outfits.length ? <><button type="button" className="button dark generate-button" onClick={generate} disabled={generating}>{generating ? "Rendering your look…" : "Generate editorial images ↗"}</button>{generated && <GeneratedImages generated={generated} />}{outfits.map((outfit) => <OutfitCard key={`${outfit.rank}-${outfit.title}`} outfit={outfit} />)}</> : <div className="result-intro"><span>✦</span><h2>Your edit, in three pieces.</h2><p>Tell us the occasion and mood. ClosetIQ will score the combinations you own across occasion, style, color harmony and freshness.</p>{message && <p className="inline-message">{message}</p>}</div>}</div></div></section>;
 }
+
+function GeneratedImages({ generated }) { return <div className="generated-images"><div><span className="eyebrow">AI editorial</span><img src={generated.editorial} alt="AI-generated flat lay of the selected outfit" /></div><div><span className="eyebrow">on the model</span><img src={generated.model} alt="Cartoon fashion model wearing the selected outfit" /></div><small>Generated from your description and selected wardrobe pieces.</small></div>; }
 
 function OutfitCard({ outfit }) { return <article className="outfit-card"><div className="outfit-header"><div><span className="eyebrow">look {String(outfit.rank).padStart(2, "0")}</span><h2>{outfit.title}</h2></div><strong>{outfit.score}<small>/100</small></strong></div><div className="outfit-items">{outfit.items.map((item) => <div className="outfit-item" key={item._id || item.name}><div className="outfit-image" style={{ backgroundImage: `url("${item.imageUrl || garmentFallback(item)}")` }} /><span>{item.name}</span></div>)}</div><div className="reason-list">{outfit.reasons?.map((reason) => <span key={reason}>✓ {reason}</span>)}</div></article>; }
 

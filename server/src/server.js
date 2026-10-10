@@ -7,6 +7,7 @@ const connectDB = require("./config/db");
 const garmentRoutes = require("./routes/garmentRoutes");
 const errorHandler = require("./middleware/errorHandler");
 const outfitRoutes = require("./routes/outfitRoutes");
+const imageRoutes = require("./routes/imageRoutes");
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.get("/api/health", (req, res) => {
 // API routes
 app.use("/api/garments", garmentRoutes);
 app.use("/api/outfits", outfitRoutes);
+app.use("/api/images", imageRoutes);
 
 // Error handler — must be after routes
 app.use(errorHandler);
