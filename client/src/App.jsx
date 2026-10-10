@@ -1,950 +1,171 @@
-
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createGarment,
   deleteGarment,
   getGarments,
   recommendOutfits,
+  updateGarment,
 } from "./services/api";
+import { findClosestMatches } from "./utils/recommendation";
 import "./index.css";
+import "./App.css";
 
 const CATEGORIES = ["top", "bottom", "dress", "outerwear", "shoes", "accessory"];
-const STYLES = ["casual", "minimal", "street", "smart", "sporty"];
 const OCCASIONS = ["college", "work", "casual", "party", "date", "travel"];
-
-const INITIAL_FORM = {
-  name: "",
-  category: "top",
-  color: "",
-  style: "casual",
-  occasions: ["college", "casual"],
-  seasons: ["all"],
-  imageUrl: "",
-};
-
-const CATEGORY_ICONS = {
-  top: "◒",
-  bottom: "◐",
-  dress: "♧",
-  outerwear: "◇",
-  shoes: "⌁",
-  accessory: "✳",
-};
-
-const plannerDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const STYLES = ["casual", "minimal", "street", "smart", "sporty"];
+const COLORS = ["black", "white", "blue", "navy", "beige", "grey", "brown", "green", "red", "pink", "cream"];
+const EMPTY_FORM = { name: "", category: "top", color: "", style: "casual", occasions: ["casual"], seasons: ["all"], imageUrl: "" };
 
 function App() {
-  const [activePage, setActivePage] = useState("home");
+  const [page, setPage] = useState("wardrobe");
   const [garments, setGarments] = useState([]);
-  const [form, setForm] = useState(INITIAL_FORM);
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [showForm, setShowForm] = useState(false);
-  const [occasion, setOccasion] = useState("college");
-  const [weather, setWeather] = useState("warm");
-  const [preferredStyle, setPreferredStyle] = useState("casual");
-  const [outfits, setOutfits] = useState([]);
-  const [loadingWardrobe, setLoadingWardrobe] = useState(true);
-  const [loadingOutfits, setLoadingOutfits] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState(null);
+  const [editing, setEditing] = useState(null);
 
-  const loadGarments = useCallback(async () => {
-    setLoadingWardrobe(true);
+  async function refresh() {
+    setLoading(true);
     try {
       const result = await getGarments();
       setGarments(result.data || []);
-      setError("");
-    } catch (err) {
-      setError(err.message || "Could not load your wardrobe.");
+      setNotice(null);
+    } catch (error) {
+      setNotice({ type: "error", text: error.message });
     } finally {
-      setLoadingWardrobe(false);
+      setLoading(false);
     }
-  }, []);
+  }
+  // The initial request synchronizes the app with the Mongo-backed wardrobe.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { refresh(); }, []);
 
-  useEffect(() => {
-    loadGarments();
-  }, [loadGarments]);
-
-  const filteredGarments = garments.filter((garment) => {
-    const matchesSearch = `${garment.name} ${garment.color} ${garment.style}`
-      .toLowerCase()
-      .includes(search.toLowerCase());
-
-    const matchesCategory =
-      categoryFilter === "all" || garment.category === categoryFilter;
-
-    return matchesSearch && matchesCategory;
-  });
-
-  const heroGarments = garments.slice(0, 3);
-  const plannerItems = plannerDays.map((day, index) => ({
-    day,
-    outfit: garments[index % garments.length] || null,
-    isToday: index === 2,
-  }));
-
-  async function handleAddGarment(event) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    setNotice("");
-
+  async function saveGarment(values) {
     try {
-      await createGarment({
-        ...form,
-        name: form.name.trim(),
-        color: form.color.trim(),
-        imageUrl: form.imageUrl.trim(),
-      });
-
-      setForm(INITIAL_FORM);
-      setShowForm(false);
-      setNotice("Added to your wardrobe.");
-      await loadGarments();
-    } catch (err) {
-      setError(err.message || "Could not save this item.");
-    } finally {
-      setSaving(false);
+      if (editing) await updateGarment(editing._id, values);
+      else await createGarment(values);
+      setEditing(null);
+      await refresh();
+      setNotice({ type: "success", text: editing ? "Piece updated." : "Piece added to your wardrobe." });
+    } catch (error) {
+      setNotice({ type: "error", text: error.message });
     }
   }
 
-  async function handleDeleteGarment(id) {
-    if (!window.confirm("Remove this item from your wardrobe?")) return;
-
-    setError("");
-    setNotice("");
-
+  async function removeGarment(id) {
+    if (!window.confirm("Remove this piece from your wardrobe?")) return;
     try {
       await deleteGarment(id);
-      setGarments((current) =>
-        current.filter((garment) => garment._id !== id)
-      );
-      setNotice("Item removed from your wardrobe.");
-    } catch (err) {
-      setError(err.message || "Could not remove this item.");
+      setGarments((current) => current.filter((item) => item._id !== id));
+      setNotice({ type: "success", text: "Piece removed." });
+    } catch (error) {
+      setNotice({ type: "error", text: error.message });
     }
   }
-
-  async function handleRecommend(event) {
-    event.preventDefault();
-    setLoadingOutfits(true);
-    setError("");
-    setNotice("");
-    setOutfits([]);
-
-    try {
-      const result = await recommendOutfits({
-        occasion,
-        weather,
-        style: preferredStyle,
-      });
-
-      setOutfits(result.data || []);
-
-      if (!result.data?.length) {
-        setNotice(
-          "Add at least one top, one bottom, and one pair of shoes to generate complete outfits."
-        );
-      }
-    } catch (err) {
-      setError(err.message || "Could not generate outfit recommendations.");
-    } finally {
-      setLoadingOutfits(false);
-    }
-  }
-
-  function toggleOccasion(value) {
-    setForm((current) => ({
-      ...current,
-      occasions: current.occasions.includes(value)
-        ? current.occasions.filter((item) => item !== value)
-        : [...current.occasions, value],
-    }));
-  }
-
-  const categoryCount = (category) =>
-    garments.filter((item) => item.category === category).length;
-
-  const navItems = [
-    { id: "home", label: "Home", icon: "◌" },
-    { id: "wardrobe", label: "Wardrobe", icon: "▣" },
-    { id: "style", label: "Style me", icon: "✦" },
-    { id: "inspiration", label: "Inspiration", icon: "◍" },
-    { id: "history", label: "History", icon: "▤" },
-    { id: "profile", label: "Profile", icon: "◎" },
-  ];
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <button className="brand" type="button" onClick={() => setActivePage("home")}>
-          <span className="brand-mark">c.</span>
-          <span>
-            <strong>closetiq</strong>
-            <small>your wardrobe, reimagined</small>
-          </span>
-        </button>
-
-        <div className="sidebar-label">your space</div>
-
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`nav-item ${activePage === item.id ? "active" : ""}`}
-            onClick={() => setActivePage(item.id)}
-          >
-            <span>{item.icon}</span>
-            {item.label}
-            {item.id === "wardrobe" && <span className="nav-count">{garments.length}</span>}
-          </button>
-        ))}
-
-        <div className="sidebar-bottom">
-          <div className="sidebar-note">
-            <span className="note-icon">✧</span>
-            <p>Wear what you own. Build a mood. Repeat with intention.</p>
-          </div>
-          <span className="version-label">closetiq · editorial styling studio</span>
-        </div>
-      </aside>
-
+      <Sidebar page={page} setPage={setPage} count={garments.length} />
       <main className="main-content">
         <header className="topbar">
-          <span className="breadcrumb">your personal style space</span>
-          <span className="status-indicator">
-            <span /> wardrobe connected
-          </span>
+          <span className="wordmark-mobile">closetiq</span>
+          <span className="topbar-kicker">your personal style space</span>
+          <span className="connection"><i /> wardrobe connected</span>
         </header>
-
-        {(error || notice) && (
-          <div className={`feedback ${error ? "feedback-error" : ""}`}>
-            <span>{error || notice}</span>
-            <button
-              onClick={() => {
-                setError("");
-                setNotice("");
-              }}
-              aria-label="Dismiss message"
-            >
-              ×
-            </button>
-          </div>
-        )}
-
-        {activePage === "home" && (
-          <section className="page home-page">
-            <div className="hero-panel">
-              <div className="hero-copy">
-                <span className="eyebrow">your wardrobe, reimagined</span>
-                <h1>
-                  Getting dressed,
-                  <span className="heading-break">with a little more you.</span>
-                </h1>
-                <p>
-                  Your wardrobe, your weather, your mood. Let&apos;s put it together.
-                </p>
-                <div className="hero-actions">
-                  <button
-                    type="button"
-                    className="button button-dark"
-                    onClick={() => setActivePage("style")}
-                  >
-                    Style my day
-                  </button>
-                  <button
-                    type="button"
-                    className="button button-light"
-                    onClick={() => setActivePage("wardrobe")}
-                  >
-                    Add a piece
-                  </button>
-                </div>
-                <div className="context-strip">
-                  <span>College · warm weather · casual</span>
-                  <strong>{garments.length} pieces in rotation</strong>
-                </div>
-              </div>
-
-              <div className="hero-collage">
-                {heroGarments.length ? (
-                  heroGarments.map((garment, index) => (
-                    <div
-                      key={garment._id || index}
-                      className={`collage-card card-${index + 1}`}
-                      style={
-                        garment.imageUrl
-                          ? { backgroundImage: `url("${garment.imageUrl}")` }
-                          : {}
-                      }
-                    >
-                      {!garment.imageUrl && (
-                        <span>{CATEGORY_ICONS[garment.category] || "✳"}</span>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-collage">
-                    <span className="empty-symbol">✧</span>
-                    <p>Start your closet by adding your first garment.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="home-grid">
-              <div className="panel feature-panel planter-panel">
-                <div className="panel-header">
-                  <span className="eyebrow">week plan</span>
-                  <h2>Your weekly edit</h2>
-                </div>
-                <div className="planner-strip">
-                  {plannerItems.map((item) => (
-                    <div
-                      key={item.day}
-                      className={`planner-card ${item.isToday ? "today" : ""}`}
-                    >
-                      <span>{item.day}</span>
-                      {item.outfit ? (
-                        <>
-                          <div
-                            className="planner-thumb"
-                            style={
-                              item.outfit.imageUrl
-                                ? { backgroundImage: `url("${item.outfit.imageUrl}")` }
-                                : {}
-                            }
-                          >
-                            {!item.outfit.imageUrl && (
-                              <span>{CATEGORY_ICONS[item.outfit.category] || "✳"}</span>
-                            )}
-                          </div>
-                          <strong>{item.outfit.name}</strong>
-                        </>
-                      ) : (
-                        <div className="planner-empty">
-                          <small>no outfit planned</small>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="panel feature-panel quick-panel">
-                <div className="panel-header">
-                  <span className="eyebrow">quick access</span>
-                  <h2>Start from what you own</h2>
-                </div>
-                <div className="quick-actions">
-                  <button type="button" onClick={() => setActivePage("wardrobe")}>
-                    <span>Wardrobe</span>
-                    <strong>{garments.length} pieces</strong>
-                  </button>
-                  <button type="button" onClick={() => setActivePage("style")}>
-                    <span>Style me</span>
-                    <strong>fresh matches</strong>
-                  </button>
-                  <button type="button" onClick={() => setActivePage("inspiration")}>
-                    <span>Inspiration</span>
-                    <strong>save ideas</strong>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activePage === "wardrobe" && (
-          <section className="page">
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">the collection</span>
-                <h1>Your wardrobe<span className="heading-dot">.</span></h1>
-                <p className="page-description">
-                  Every piece you own, displayed like a curated archive.
-                </p>
-              </div>
-              <button
-                className="button button-dark"
-                onClick={() => setShowForm((current) => !current)}
-              >
-                {showForm ? "Close ×" : "+ Add a piece"}
-              </button>
-            </div>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <span className="stat-label">total pieces</span>
-                <strong>{garments.length.toString().padStart(2, "0")}</strong>
-                <span className="stat-foot">in your closet</span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">tops</span>
-                <strong>{categoryCount("top").toString().padStart(2, "0")}</strong>
-                <span className="stat-foot">ready to style</span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">bottoms</span>
-                <strong>{categoryCount("bottom").toString().padStart(2, "0")}</strong>
-                <span className="stat-foot">for easy combinations</span>
-              </div>
-              <div className="stat-card stat-highlight">
-                <span className="stat-label">shoes</span>
-                <strong>{categoryCount("shoes").toString().padStart(2, "0")}</strong>
-                <span className="stat-foot">the finishing layer</span>
-              </div>
-            </div>
-
-            {showForm && (
-              <form className="garment-form panel" onSubmit={handleAddGarment}>
-                <div className="panel-heading">
-                  <div>
-                    <span className="eyebrow">new addition</span>
-                    <h2>Add to your collection</h2>
-                  </div>
-                </div>
-
-                <div className="form-grid">
-                  <label>
-                    Item name *
-                    <input
-                      required
-                      maxLength={100}
-                      placeholder="e.g. Black oversized tee"
-                      value={form.name}
-                      onChange={(event) =>
-                        setForm({ ...form, name: event.target.value })
-                      }
-                    />
-                  </label>
-
-                  <label>
-                    Category *
-                    <select
-                      value={form.category}
-                      onChange={(event) =>
-                        setForm({ ...form, category: event.target.value })
-                      }
-                    >
-                      {CATEGORIES.map((item) => (
-                        <option key={item} value={item}>
-                          {item.charAt(0).toUpperCase() + item.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Main color *
-                    <input
-                      required
-                      maxLength={40}
-                      placeholder="e.g. black"
-                      value={form.color}
-                      onChange={(event) =>
-                        setForm({ ...form, color: event.target.value })
-                      }
-                    />
-                  </label>
-
-                  <label>
-                    Style
-                    <select
-                      value={form.style}
-                      onChange={(event) =>
-                        setForm({ ...form, style: event.target.value })
-                      }
-                    >
-                      {STYLES.map((item) => (
-                        <option key={item} value={item}>
-                          {item.charAt(0).toUpperCase() + item.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="full-width">
-                    Image URL <span className="optional">(optional)</span>
-                    <input
-                      type="url"
-                      placeholder="https://..."
-                      value={form.imageUrl}
-                      onChange={(event) =>
-                        setForm({ ...form, imageUrl: event.target.value })
-                      }
-                    />
-                  </label>
-
-                  <fieldset className="full-width checkbox-group">
-                    <legend>Where would you wear it?</legend>
-                    <div className="chip-options">
-                      {OCCASIONS.map((item) => (
-                        <label className="check-chip" key={item}>
-                          <input
-                            type="checkbox"
-                            checked={form.occasions.includes(item)}
-                            onChange={() => toggleOccasion(item)}
-                          />
-                          {item}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                </div>
-
-                <div className="form-actions">
-                  <button
-                    type="button"
-                    className="button button-light"
-                    onClick={() => setShowForm(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="button button-dark"
-                    type="submit"
-                    disabled={saving}
-                  >
-                    {saving ? "Saving..." : "Save to wardrobe ↗"}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            <div className="collection-toolbar">
-              <div>
-                <span className="eyebrow">your pieces</span>
-                <h2>The collection <span className="muted-count">{garments.length}</span></h2>
-              </div>
-              <input
-                className="search-input"
-                type="search"
-                placeholder="Search your wardrobe..."
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-
-            <div className="filter-row">
-              {["all", ...CATEGORIES].map((item) => (
-                <button
-                  key={item}
-                  className={`filter-chip ${categoryFilter === item ? "selected" : ""}`}
-                  onClick={() => setCategoryFilter(item)}
-                >
-                  {item === "all"
-                    ? "Everything"
-                    : item.charAt(0).toUpperCase() + item.slice(1)}
-                </button>
-              ))}
-            </div>
-
-            {loadingWardrobe ? (
-              <div className="empty-state">
-                <div className="loading-spinner" />
-                <p>Opening your wardrobe...</p>
-              </div>
-            ) : filteredGarments.length === 0 ? (
-              <div className="empty-state">
-                <span className="empty-symbol">✳</span>
-                <h3>{garments.length ? "Nothing found" : "Your story starts here."}</h3>
-                <p>
-                  {garments.length
-                    ? "Try another search or category."
-                    : "Add your first piece and start building outfits from what you own."}
-                </p>
-                {!garments.length && (
-                  <button
-                    className="button button-dark"
-                    onClick={() => setShowForm(true)}
-                  >
-                    Add your first piece
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="wardrobe-grid">
-                {filteredGarments.map((garment, index) => (
-                  <article className="garment-card" key={garment._id}>
-                    <div
-                      className={`garment-visual visual-${index % 6}`}
-                      style={
-                        garment.imageUrl
-                          ? { backgroundImage: `url("${garment.imageUrl}")` }
-                          : {}
-                      }
-                    >
-                      {!garment.imageUrl && (
-                        <span className="garment-symbol">
-                          {CATEGORY_ICONS[garment.category] || "✳"}
-                        </span>
-                      )}
-                      <span className="category-tag">{garment.category}</span>
-                      <button
-                        className="delete-button"
-                        onClick={() => handleDeleteGarment(garment._id)}
-                        aria-label={`Delete ${garment.name}`}
-                        title="Remove item"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <div className="garment-info">
-                      <div>
-                        <h3>{garment.name}</h3>
-                        <p>
-                          <span
-                            className="color-dot"
-                            style={{ backgroundColor: garment.color }}
-                          />
-                          {garment.color}
-                        </p>
-                      </div>
-                      <span className="garment-style">{garment.style}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {activePage === "style" && (
-          <section className="page style-page">
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">daily styling studio</span>
-                <h1>Let&apos;s get dressed<span className="heading-dot">.</span></h1>
-                <p className="page-description">
-                  Tell us about your day. We&apos;ll work with what you already own.
-                </p>
-              </div>
-              <span className="style-star">✳</span>
-            </div>
-
-            <div className="style-layout">
-              <form className="context-panel panel" onSubmit={handleRecommend}>
-                <span className="eyebrow">01 · set the scene</span>
-                <h2>What&apos;s the plan?</h2>
-                <p className="panel-description">
-                  Your outfit should fit your day, not the other way around.
-                </p>
-
-                <label className="field-label" htmlFor="occasion">the occasion</label>
-                <div className="choice-grid">
-                  {OCCASIONS.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      className={`choice-button ${occasion === item ? "chosen" : ""}`}
-                      onClick={() => setOccasion(item)}
-                    >
-                      {item.charAt(0).toUpperCase() + item.slice(1)}
-                    </button>
-                  ))}
-                </div>
-
-                <label className="field-label" htmlFor="weather">the weather</label>
-                <select
-                  id="weather"
-                  className="full-select"
-                  value={weather}
-                  onChange={(event) => setWeather(event.target.value)}
-                >
-                  <option value="warm">☀ Warm / sunny</option>
-                  <option value="hot">♨ Hot</option>
-                  <option value="cool">☁ Cool</option>
-                  <option value="cold">❄ Cold</option>
-                  <option value="rainy">☂ Rainy / monsoon</option>
-                </select>
-
-                <label className="field-label" htmlFor="style">your mood</label>
-                <select
-                  id="style"
-                  className="full-select"
-                  value={preferredStyle}
-                  onChange={(event) => setPreferredStyle(event.target.value)}
-                >
-                  {STYLES.map((item) => (
-                    <option key={item} value={item}>
-                      {item.charAt(0).toUpperCase() + item.slice(1)}
-                    </option>
-                  ))}
-                </select>
-
-                <div className="context-summary">
-                  <span>your brief</span>
-                  <p>
-                    {occasion} <span>·</span> {weather} weather <span>·</span>{" "}
-                    {preferredStyle} style
-                  </p>
-                </div>
-
-                <button
-                  className="button button-dark recommend-button"
-                  type="submit"
-                  disabled={loadingOutfits}
-                >
-                  {loadingOutfits ? "Finding your look..." : "Find my outfits ↗"}
-                </button>
-                <p className="privacy-note">
-                  Recommendations use your saved wardrobe and matching rules.
-                </p>
-              </form>
-
-              <div className="recommendation-area">
-                <div className="results-heading">
-                  <div>
-                    <span className="eyebrow">02 · the edit</span>
-                    <h2>Looks for you</h2>
-                  </div>
-                  {outfits.length > 0 && (
-                    <span className="result-count">
-                      {outfits.length} {outfits.length === 1 ? "LOOK" : "LOOKS"}
-                    </span>
-                  )}
-                </div>
-
-                {loadingOutfits ? (
-                  <div className="empty-state results-empty">
-                    <div className="loading-spinner" />
-                    <p>Putting the pieces together...</p>
-                  </div>
-                ) : outfits.length === 0 ? (
-                  <div className="empty-state results-empty">
-                    <span className="empty-symbol">✧</span>
-                    <h3>Your next favorite outfit awaits.</h3>
-                    <p>
-                      Choose your occasion and mood, then let ClosetIQ put your existing
-                      pieces together.
-                    </p>
-                    <span className="results-hint">
-                      {garments.length} PIECES IN YOUR WARDROBE
-                    </span>
-                  </div>
-                ) : (
-                  <div className="outfit-list">
-                    {outfits.map((outfit, index) => (
-                      <article className="outfit-card" key={`${outfit.rank}-${index}`}>
-                        <div className="outfit-card-header">
-                          <div>
-                            <span className="eyebrow">look 0{outfit.rank || index + 1}</span>
-                            <h3>{outfit.title || "Your outfit edit"}</h3>
-                          </div>
-                          <div className="score-badge">
-                            <strong>{outfit.score}</strong>
-                            <span>/ 100</span>
-                          </div>
-                        </div>
-
-                        <div className="outfit-items">
-                          {(outfit.items || []).map((item) => (
-                            <div className="outfit-item" key={item._id}>
-                              <div
-                                className="outfit-item-visual"
-                                style={
-                                  item.imageUrl
-                                    ? { backgroundImage: `url("${item.imageUrl}")` }
-                                    : {}
-                                }
-                              >
-                                {!item.imageUrl && (
-                                  <span>{CATEGORY_ICONS[item.category] || "✳"}</span>
-                                )}
-                              </div>
-                              <div className="outfit-item-details">
-                                <span className="eyebrow">{item.category}</span>
-                                <strong>{item.name}</strong>
-                                <span>{item.color}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="score-factors">
-                          {Object.entries(outfit.factors || {}).map(([key, value]) => (
-                            <div className="factor" key={key}>
-                              <div className="factor-label">
-                                <span>{key}</span>
-                                <strong>{value}</strong>
-                              </div>
-                              <div className="factor-track">
-                                <span style={{ width: `${value}%` }} />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {outfit.reasons?.length > 0 && (
-                          <div className="outfit-reasons">
-                            <span>why it works</span>
-                            <ul>
-                              {outfit.reasons.map((reason) => (
-                                <li key={reason}>{reason}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activePage === "inspiration" && (
-          <section className="page inspiration-page">
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">moodboard</span>
-                <h1>Inspiration<span className="heading-dot">.</span></h1>
-                <p className="page-description">
-                  Save looks you love and connect them back to the pieces you already own.
-                </p>
-              </div>
-              <button type="button" className="button button-dark">
-                Save an idea
-              </button>
-            </div>
-
-            <div className="masonry-grid">
-              {garments.length ? (
-                garments.slice(0, 6).map((garment, index) => (
-                  <article key={garment._id || index} className={`masonry-card card-${index % 4}`}>
-                    <div
-                      className="masonry-visual"
-                      style={
-                        garment.imageUrl
-                          ? { backgroundImage: `url("${garment.imageUrl}")` }
-                          : {}
-                      }
-                    >
-                      {!garment.imageUrl && (
-                        <span>{CATEGORY_ICONS[garment.category] || "✳"}</span>
-                      )}
-                    </div>
-                    <div className="masonry-body">
-                      <span>{garment.category}</span>
-                      <h3>{garment.name}</h3>
-                      <small>Find it in my wardrobe</small>
-                    </div>
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state full-span">
-                  <span className="empty-symbol">✧</span>
-                  <h3>Your inspiration board is waiting.</h3>
-                  <p>Add a few garments and save ideas to start building your personal moodboard.</p>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {activePage === "history" && (
-          <section className="page history-page">
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">style diary</span>
-                <h1>Worn lately<span className="heading-dot">.</span></h1>
-                <p className="page-description">
-                  A journal of outfits you have worn and what you want to repeat.
-                </p>
-              </div>
-            </div>
-
-            {garments.length ? (
-              <div className="history-list">
-                {garments.slice(0, 4).map((garment, index) => (
-                  <article key={garment._id || index} className="history-card panel">
-                    <div
-                      className="history-thumb"
-                      style={
-                        garment.imageUrl
-                          ? { backgroundImage: `url("${garment.imageUrl}")` }
-                          : {}
-                      }
-                    >
-                      {!garment.imageUrl && (
-                        <span>{CATEGORY_ICONS[garment.category] || "✳"}</span>
-                      )}
-                    </div>
-                    <div className="history-copy">
-                      <span className="eyebrow">{index + 1} week ago</span>
-                      <h3>{garment.name}</h3>
-                      <p>Worn for a {garment.style} look and saved as part of the week&apos;s styling notes.</p>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <span className="empty-symbol">✧</span>
-                <h3>Your style diary is empty.</h3>
-                <p>Mark an outfit as worn to start building a record of what you keep reaching for.</p>
-              </div>
-            )}
-          </section>
-        )}
-
-        {activePage === "profile" && (
-          <section className="page profile-page">
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">your preferences</span>
-                <h1>Profile<span className="heading-dot">.</span></h1>
-                <p className="page-description">
-                  A lightweight set of style signals that shape future recommendations.
-                </p>
-              </div>
-            </div>
-
-            <div className="profile-grid">
-              <div className="panel profile-card">
-                <span className="eyebrow">style identity</span>
-                <h2>Core preferences</h2>
-                <ul>
-                  <li>Favored mood: minimal</li>
-                  <li>Favorite colors: beige, navy, black</li>
-                  <li>Comfort-first: yes</li>
-                </ul>
-              </div>
-
-              <div className="panel profile-card">
-                <span className="eyebrow">wardrobe rhythm</span>
-                <h2>What matters</h2>
-                <ul>
-                  <li>Prioritizes day-to-day versatility</li>
-                  <li>Prefers weather-aware dressing</li>
-                  <li>Limits repeated outfit combos</li>
-                </ul>
-              </div>
-
-              <div className="panel profile-card">
-                <span className="eyebrow">settings</span>
-                <h2>App preferences</h2>
-                <ul>
-                  <li>Styling updates on</li>
-                  <li>Incoming weather view on</li>
-                  <li>Save suggestions automatically off</li>
-                </ul>
-              </div>
-            </div>
-          </section>
-        )}
-
-        <footer className="app-footer">
-          <span>closetiq © 2026</span>
-          <span>made for the way you get dressed.</span>
-        </footer>
+        {notice && <div className={`notice ${notice.type}`} role="status"><span>{notice.text}</span><button type="button" onClick={() => setNotice(null)} aria-label="Dismiss message">×</button></div>}
+        {page === "wardrobe" && <WardrobePage garments={garments} loading={loading} onSave={saveGarment} onEdit={setEditing} onDelete={removeGarment} editing={editing} />}
+        {page === "style" && <StylePage garments={garments} />}
+        {page === "recreate" && <RecreatePage garments={garments} />}
       </main>
     </div>
   );
 }
+
+function Sidebar({ page, setPage, count }) {
+  const links = [
+    { id: "wardrobe", label: "My wardrobe", icon: "▦" },
+    { id: "style", label: "Style me", icon: "✦" },
+    { id: "recreate", label: "Recreate this look", icon: "◌" },
+  ];
+  return <aside className="sidebar">
+    <button className="brand" type="button" onClick={() => setPage("wardrobe")}><span className="brand-mark">c.</span><span><strong>closetiq</strong><small>wardrobe, reimagined</small></span></button>
+    <p className="sidebar-label">your studio</p>
+    <nav aria-label="Primary navigation">{links.map((link) => <button key={link.id} type="button" className={`nav-item ${page === link.id ? "active" : ""}`} onClick={() => setPage(link.id)}><span className="nav-icon">{link.icon}</span>{link.label}{link.id === "wardrobe" && <b>{count}</b>}</button>)}</nav>
+    <div className="sidebar-bottom"><div className="sidebar-note"><span>✧</span><p>Wear what you own. Build a mood. Repeat with intention.</p></div><small>closetiq · editorial styling studio</small></div>
+  </aside>;
+}
+
+function WardrobePage({ garments, loading, onSave, onEdit, onDelete, editing }) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("all");
+  const [showForm, setShowForm] = useState(false);
+  const filtered = useMemo(() => garments.filter((item) => `${item.name} ${item.color} ${item.style}`.toLowerCase().includes(query.toLowerCase()) && (category === "all" || item.category === category)), [garments, query, category]);
+  const formVisible = showForm || Boolean(editing);
+  return <section className="page">
+    <PageIntro eyebrow="the collection" title={<>Your wardrobe<span className="heading-dot">.</span></>} description="A considered archive of the pieces already in your life.">
+      <button className="button dark" type="button" onClick={() => setShowForm((value) => !value)}>{formVisible ? "Close ×" : "+ Add a piece"}</button>
+    </PageIntro>
+    <div className="stats-grid"><Stat label="total pieces" value={garments.length} foot="in your closet" /><Stat label="tops" value={garments.filter((x) => x.category === "top").length} foot="ready to style" /><Stat label="bottoms" value={garments.filter((x) => x.category === "bottom").length} foot="easy combinations" /><Stat label="shoes" value={garments.filter((x) => x.category === "shoes").length} foot="the finishing layer" highlight /></div>
+    {formVisible && <GarmentForm initial={editing || EMPTY_FORM} editing={Boolean(editing)} onCancel={() => { setShowForm(false); onEdit(null); }} onSave={async (values) => { await onSave(values); setShowForm(false); }} />}
+    <div className="toolbar"><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pieces, colors, styles" aria-label="Search wardrobe" /></label><div className="filter-list" aria-label="Filter by category">{["all", ...CATEGORIES].map((item) => <button type="button" key={item} className={category === item ? "selected" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div></div>
+    {loading ? <LoadingState /> : filtered.length ? <div className="garment-grid">{filtered.map((garment) => <GarmentCard key={garment._id} garment={garment} onEdit={() => onEdit(garment)} onDelete={() => onDelete(garment._id)} />)}</div> : <EmptyState title={garments.length ? "No pieces match that filter" : "Your wardrobe is waiting"} text={garments.length ? "Try a different search or category." : "Add your first piece to start building looks from what you own."} action={!garments.length ? () => setShowForm(true) : null} />}
+  </section>;
+}
+
+function PageIntro({ eyebrow, title, description, children }) { return <div className="page-heading"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>{children}</div>; }
+function Stat({ label, value, foot, highlight }) { return <div className={`stat-card ${highlight ? "highlight" : ""}`}><span>{label}</span><strong>{String(value).padStart(2, "0")}</strong><small>{foot}</small></div>; }
+
+function GarmentForm({ initial, editing, onCancel, onSave }) {
+  const [form, setForm] = useState({ ...EMPTY_FORM, ...initial });
+  const [preview, setPreview] = useState(initial.imageUrl || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  function update(key, value) { setForm((current) => ({ ...current, [key]: value })); }
+  function toggleOccasion(value) { update("occasions", form.occasions.includes(value) ? form.occasions.filter((item) => item !== value) : [...form.occasions, value]); }
+  function filePreview(event) {
+    const file = event.target.files?.[0]; if (!file) return;
+    const reader = new FileReader(); reader.onload = () => { setPreview(reader.result); update("imageUrl", reader.result); }; reader.readAsDataURL(file);
+  }
+  async function submit(event) {
+    event.preventDefault(); if (!form.name.trim() || !form.color.trim()) { setError("Name and color are required."); return; }
+    setSaving(true); setError("");
+    try { await onSave({ ...form, name: form.name.trim(), color: form.color.trim() }); } catch (saveError) { setError(saveError.message); } finally { setSaving(false); }
+  }
+  return <form className="form-panel" onSubmit={submit}><div className="form-title"><div><span className="eyebrow">{editing ? "edit piece" : "new addition"}</span><h2>{editing ? "Refine this piece" : "Add to your collection"}</h2></div><span className="required-note">* required</span></div>
+    <div className="form-layout"><div className="image-uploader"><div className="upload-preview" style={preview ? { backgroundImage: `url("${preview}")` } : {}}>{!preview && <><span>＋</span><small>Preview</small></>}</div><label className="upload-button">Upload image<input type="file" accept="image/*" onChange={filePreview} /></label></div>
+      <div className="form-grid"><label>Piece name *<input required value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. espresso knit tee" maxLength={100} /></label><label>Category *<select value={form.category} onChange={(e) => update("category", e.target.value)}>{CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label><label>Color *<input required list="closet-colors" value={form.color} onChange={(e) => update("color", e.target.value)} placeholder="e.g. mocha" maxLength={40} /><datalist id="closet-colors">{COLORS.map((color) => <option key={color} value={color} />)}</datalist></label><label>Style<select value={form.style} onChange={(e) => update("style", e.target.value)}>{STYLES.map((item) => <option key={item}>{item}</option>)}</select></label><fieldset className="full"><legend>Works for</legend><div className="chips">{OCCASIONS.map((item) => <label key={item} className={form.occasions.includes(item) ? "chip checked" : "chip"}><input type="checkbox" checked={form.occasions.includes(item)} onChange={() => toggleOccasion(item)} />{item}</label>)}</div></fieldset></div></div>
+    {error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button type="button" className="button light" onClick={onCancel}>Cancel</button><button className="button dark" disabled={saving}>{saving ? "Saving…" : editing ? "Save changes" : "Save to wardrobe ↗"}</button></div>
+  </form>;
+}
+
+function GarmentCard({ garment, onEdit, onDelete }) { return <article className="garment-card"><div className="garment-image" style={garment.imageUrl ? { backgroundImage: `url("${garment.imageUrl}")` } : {}}>{!garment.imageUrl && <span className="category-glyph">{garment.category === "shoes" ? "⌁" : garment.category === "accessory" ? "✳" : "◒"}</span>}<div className="card-actions"><button type="button" onClick={onEdit} aria-label={`Edit ${garment.name}`}>Edit</button><button type="button" onClick={onDelete} aria-label={`Delete ${garment.name}`}>Delete</button></div></div><div className="garment-info"><div><h3>{garment.name}</h3><p>{garment.color} · {garment.category}</p></div><span className="color-dot" style={{ background: garment.color }} title={garment.color} /></div></article>; }
+function LoadingState() { return <div className="state-card"><div className="spinner" /><h2>Opening your wardrobe…</h2><p>Connecting to your collection.</p></div>; }
+function EmptyState({ title, text, action }) { return <div className="state-card"><span className="state-symbol">✧</span><h2>{title}</h2><p>{text}</p>{action && <button type="button" className="button dark" onClick={action}>Add your first piece</button>}</div>; }
+
+function StylePage() {
+  const [context, setContext] = useState({ occasion: "casual", style: "minimal", description: "" });
+  const [outfits, setOutfits] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  async function submit(event) {
+    event.preventDefault(); setLoading(true); setMessage(""); setOutfits([]);
+    try { const result = await recommendOutfits(context); setOutfits(result.data || []); if (!result.data?.length) setMessage("You need at least one top, one bottom, and one pair of shoes for a complete look."); }
+    catch (error) { setMessage(error.message); } finally { setLoading(false); }
+  }
+  return <section className="page"><PageIntro eyebrow="the daily edit" title={<>Style me<span className="heading-dot">.</span></>} description="A clear, explainable edit built only from pieces in your wardrobe." /><div className="style-layout"><form className="style-form panel" onSubmit={submit}><div className="eyebrow">set the scene</div><h2>What are you dressing for?</h2><label>Occasion<select value={context.occasion} onChange={(e) => setContext({ ...context, occasion: e.target.value })}>{OCCASIONS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Style / mood<select value={context.style} onChange={(e) => setContext({ ...context, style: e.target.value })}>{STYLES.map((item) => <option key={item}>{item}</option>)}</select></label><label>Anything else? <span className="optional">optional</span><textarea value={context.description} onChange={(e) => setContext({ ...context, description: e.target.value })} placeholder="A relaxed coffee run, but still pulled together…" rows="4" /></label><button className="button dark full-button" disabled={loading}>{loading ? "Composing…" : "Compose my looks ↗"}</button></form><div className="outfit-results">{loading ? <LoadingState /> : outfits.length ? outfits.map((outfit) => <OutfitCard key={`${outfit.rank}-${outfit.title}`} outfit={outfit} />) : <div className="result-intro"><span>✦</span><h2>Your edit, in three pieces.</h2><p>Tell us the occasion and mood. ClosetIQ will score the combinations you own across occasion, style, color harmony and freshness.</p>{message && <p className="inline-message">{message}</p>}</div>}</div></div></section>;
+}
+
+function OutfitCard({ outfit }) { return <article className="outfit-card"><div className="outfit-header"><div><span className="eyebrow">look {String(outfit.rank).padStart(2, "0")}</span><h2>{outfit.title}</h2></div><strong>{outfit.score}<small>/100</small></strong></div><div className="outfit-items">{outfit.items.map((item) => <div className="outfit-item" key={item._id || item.name}><div className="outfit-image" style={item.imageUrl ? { backgroundImage: `url("${item.imageUrl}")` } : {}}>{!item.imageUrl && <span>◒</span>}</div><span>{item.name}</span></div>)}</div><div className="reason-list">{outfit.reasons?.map((reason) => <span key={reason}>✓ {reason}</span>)}</div></article>; }
+
+function RecreatePage({ garments }) {
+  const [image, setImage] = useState("");
+  const [attributes, setAttributes] = useState({ categories: ["top", "bottom", "shoes"], colors: [] });
+  const [matches, setMatches] = useState(null);
+  function upload(event) { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setImage(reader.result); reader.readAsDataURL(file); }
+  function toggle(key, value) { setAttributes((current) => ({ ...current, [key]: current[key].includes(value) ? current[key].filter((item) => item !== value) : [...current[key], value] })); }
+  function match() { setMatches(findClosestMatches(garments, attributes)); }
+  return <section className="page"><PageIntro eyebrow="the reference desk" title={<>Recreate this look<span className="heading-dot">.</span></>} description="Bring a saved look. We’ll compare it honestly to the pieces you own." /><div className="recreate-layout"><div className="inspiration-panel panel"><div className={`inspiration-preview ${image ? "has-image" : ""}`} style={image ? { backgroundImage: `url("${image}")` } : {}}>{!image && <><span className="upload-icon">＋</span><h2>Drop in an inspiration</h2><p>Upload a screenshot or local image to keep it beside your notes.</p></>}</div><label className="button light upload-cta">Choose image<input type="file" accept="image/*" onChange={upload} /></label><p className="honesty"><strong>Note:</strong> ClosetIQ does not use computer vision. You confirm the visible categories and colors below.</p></div><div className="attribute-panel panel"><span className="eyebrow">your read of the look</span><h2>Confirm the ingredients</h2><fieldset><legend>Categories</legend><div className="chips">{CATEGORIES.map((item) => <label key={item} className={attributes.categories.includes(item) ? "chip checked" : "chip"}><input type="checkbox" checked={attributes.categories.includes(item)} onChange={() => toggle("categories", item)} />{item}</label>)}</div></fieldset><fieldset><legend>Colors you see</legend><div className="chips">{COLORS.map((item) => <label key={item} className={attributes.colors.includes(item) ? "chip checked" : "chip"}><input type="checkbox" checked={attributes.colors.includes(item)} onChange={() => toggle("colors", item)} />{item}</label>)}</div></fieldset><button type="button" className="button dark full-button" onClick={match}>Find my closest pieces ↗</button></div></div>{matches && <MatchResults result={matches} />}</section>;
+}
+
+function MatchResults({ result }) { return <div className="matches"><div className="matches-heading"><div><span className="eyebrow">the closest edit</span><h2>A combination from your closet</h2></div><span>{result.missing.length ? `${result.missing.length} category gaps` : "complete look"}</span></div>{result.missing.length > 0 && <p className="missing-note">You don’t currently have: {result.missing.join(", ")}. Here’s the closest owned version.</p>}<div className="match-grid">{result.matches.map(({ garment, score }) => <div className="match-item" key={garment._id}><div className="match-image" style={garment.imageUrl ? { backgroundImage: `url("${garment.imageUrl}")` } : {}}>{!garment.imageUrl && <span>◒</span>}</div><div><strong>{garment.name}</strong><span>{garment.color} · {score}% fit</span></div></div>)}</div></div>; }
 
 export default App;
